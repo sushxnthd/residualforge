@@ -1,0 +1,11 @@
+{
+  "name": "residualforge",
+  "description": "Finite-difference PDE residual auditing for scientific surrogate trajectories.",
+  "topics": [
+    "scientific-ml",
+    "machine-learning",
+    "numerical-methods",
+    "research-tools"
+  ],
+  "homepage": "https://sushxnthd.github.io/residualforge/"
+}
