@@ -1,0 +1,19 @@
+name: FORGE payload integrity check
+on:
+  push:
+    branches: [forge-fpga-ci]
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hash payload
+        run: |
+          wc -c forge_payload/part*.b64
+          sha256sum forge_payload/part*.b64
+          cat forge_payload/part1.b64 forge_payload/part2.b64 forge_payload/part3.b64 > /tmp/all.b64
+          sha256sum /tmp/all.b64
+          base64 -d /tmp/all.b64 > /tmp/payload.tgz
+          sha256sum /tmp/payload.tgz
+          gzip -t /tmp/payload.tgz
