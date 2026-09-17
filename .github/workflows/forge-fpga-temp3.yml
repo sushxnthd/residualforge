@@ -1,0 +1,52 @@
+name: FORGE FPGA temporary evidence build v3
+on:
+  push:
+    branches: [forge-fpga-ci]
+    paths:
+      - ".github/workflows/forge-fpga-temp3.yml"
+  workflow_dispatch:
+jobs:
+  fpga:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install open FPGA toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog yosys nextpnr-ice40 fpga-icestorm
+      - name: Reconstruct verified payload
+        run: |
+          cat forge_payload/part1.b64 forge_payload/part2a.b64 forge_payload/part2b.b64 forge_payload/part3.b64 > /tmp/all.b64
+          test "$(sha256sum /tmp/all.b64 | cut -d' ' -f1)" = "83c8b428e2dbba9eba450b257535b378a9d5581986375c321de9e6840dd67763"
+          base64 -d /tmp/all.b64 > /tmp/forge_hw.tgz
+          test "$(sha256sum /tmp/forge_hw.tgz | cut -d' ' -f1)" = "3e26d55d84729b7cb92688bd95818cf229fb02f537fc83009906a41d9eca4c18"
+          rm -rf /tmp/forge_fpga && mkdir -p /tmp/forge_fpga
+          tar xzf /tmp/forge_hw.tgz -C /tmp/forge_fpga
+          mkdir -p /tmp/forge_fpga/build /tmp/forge_fpga/results
+          test -f /tmp/forge_fpga/rtl/forge_mlp_core.sv
+      - name: RTL simulation
+        working-directory: /tmp/forge_fpga
+        run: |
+          iverilog -g2012 -Wall -s tb_forge_mlp_core -o build/tb_core.vvp rtl/forge_mlp_core.sv sim/tb_forge_mlp_core.sv
+          vvp build/tb_core.vvp | tee results/iverilog_core.log
+      - name: Synthesize iCE40UP5K
+        working-directory: /tmp/forge_fpga
+        run: |
+          yosys -ql results/yosys.log -p 'read_verilog -sv rtl/forge_mlp_core.sv rtl/uart_rx.sv rtl/uart_tx.sv rtl/forge_uart_top.sv; synth_ice40 -dsp -top forge_uart_top -json build/forge_uart_top.json; stat'
+          tail -120 results/yosys.log
+      - name: Place and route
+        working-directory: /tmp/forge_fpga
+        run: |
+          nextpnr-ice40 --up5k --package sg48 --json build/forge_uart_top.json --pcf board/icebreaker.pcf --asc build/forge_uart_top.asc --freq 12 --report results/nextpnr.json 2>&1 | tee results/nextpnr.log
+          icetime -d up5k -mtr results/icetime.rpt build/forge_uart_top.asc
+          icepack build/forge_uart_top.asc build/forge_uart_top.bin
+          python3 tools/parse_fpga_reports.py
+          cat results/FPGA_MEASUREMENTS.md
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-fpga-evidence-v3
+          path: |
+            /tmp/forge_fpga/build/
+            /tmp/forge_fpga/results/
