@@ -1,0 +1,50 @@
+name: FORGE FPGA temporary evidence build
+
+on:
+  push:
+    branches: [forge-fpga-ci]
+    paths:
+      - "forge_payload/**"
+      - ".github/workflows/forge-fpga-temp.yml"
+  workflow_dispatch:
+
+jobs:
+  fpga:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install open FPGA toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog yosys nextpnr-ice40 fpga-icestorm
+      - name: Unpack FORGE payload
+        run: |
+          mkdir -p /tmp/forge_fpga
+          cat forge_payload/part1.b64 forge_payload/part2.b64 forge_payload/part3.b64 | base64 -d > /tmp/forge_hw.tgz
+          tar xzf /tmp/forge_hw.tgz -C /tmp
+          mkdir -p /tmp/forge_fpga/build /tmp/forge_fpga/results
+      - name: RTL simulation
+        working-directory: /tmp/forge_fpga
+        run: |
+          iverilog -g2012 -Wall -s tb_forge_mlp_core -o build/tb_core.vvp rtl/forge_mlp_core.sv sim/tb_forge_mlp_core.sv
+          vvp build/tb_core.vvp | tee results/iverilog_core.log
+      - name: Synthesize iCE40UP5K
+        working-directory: /tmp/forge_fpga
+        run: |
+          yosys -ql results/yosys.log -p 'read_verilog -sv rtl/forge_mlp_core.sv rtl/uart_rx.sv rtl/uart_tx.sv rtl/forge_uart_top.sv; synth_ice40 -dsp -top forge_uart_top -json build/forge_uart_top.json; stat'
+          tail -120 results/yosys.log
+      - name: Place and route
+        working-directory: /tmp/forge_fpga
+        run: |
+          nextpnr-ice40 --up5k --package sg48 --json build/forge_uart_top.json --pcf board/icebreaker.pcf --asc build/forge_uart_top.asc --freq 12 --report results/nextpnr.json 2>&1 | tee results/nextpnr.log
+          icetime -d up5k -mtr results/icetime.rpt build/forge_uart_top.asc
+          icepack build/forge_uart_top.asc build/forge_uart_top.bin
+          python3 tools/parse_fpga_reports.py
+          cat results/FPGA_MEASUREMENTS.md
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-fpga-evidence
+          path: |
+            /tmp/forge_fpga/build/forge_uart_top.bin
+            /tmp/forge_fpga/results/
